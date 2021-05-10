@@ -1,30 +1,31 @@
 """
     This file is copied/apdated from https://github.com/berkeleydeeprlcourse/homework/tree/master/hw3
 """
-import sys
 import pickle
-import numpy as np
+import random
+import sys
 from collections import namedtuple
 from itertools import count
-import random
+
 import gym.spaces
-
+import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import torch.autograd as autograd
+import torch.nn as nn
 
-from utils.replay_buffer import ReplayBuffer
 from utils.gym import get_wrapper_by_name
+from utils.replay_buffer import ReplayBuffer
 
 USE_CUDA = torch.cuda.is_available()
 dtype = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
+
 
 class Variable(autograd.Variable):
     def __init__(self, data, *args, **kwargs):
         if USE_CUDA:
             data = data.cuda()
         super(Variable, self).__init__(data, *args, **kwargs)
+
 
 """
     OptimizerSpec containing following attributes
@@ -38,21 +39,21 @@ Statistic = {
     "best_mean_episode_rewards": []
 }
 
-def dqn_learing(
-    env,
-    q_func,
-    optimizer_spec,
-    exploration,
-    stopping_criterion=None,
-    replay_buffer_size=1000000,
-    batch_size=32,
-    gamma=0.99,
-    learning_starts=50000,
-    learning_freq=4,
-    frame_history_len=4,
-    target_update_freq=10000
-    ):
 
+def dqn_learing(
+        env,
+        q_func,
+        optimizer_spec,
+        exploration,
+        stopping_criterion=None,
+        replay_buffer_size=1000000,
+        batch_size=32,
+        gamma=0.99,
+        learning_starts=50000,
+        learning_freq=4,
+        frame_history_len=4,
+        target_update_freq=10000
+):
     """Run Deep Q-learning algorithm.
 
     You can specify your own convnet using q_func.
@@ -95,7 +96,7 @@ def dqn_learing(
         each update to the target Q network
     """
     assert type(env.observation_space) == gym.spaces.Box
-    assert type(env.action_space)      == gym.spaces.Discrete
+    assert type(env.action_space) == gym.spaces.Discrete
 
     ###############
     # BUILD MODEL #
@@ -140,7 +141,6 @@ def dqn_learing(
     criterion = nn.MSELoss(reduction='sum')
 
     ######
-
 
     # Construct Q network optimizer function
     optimizer = optimizer_spec.constructor(Q.parameters(), **optimizer_spec.kwargs)
@@ -201,25 +201,9 @@ def dqn_learing(
         # action = env.action_space.sample()
         # 2. A chance of e to perform random action
         if np.random.rand(1) < 0.1:
-            a = env.action_space.sample()
+            action = env.action_space.sample()
 
         next_state, reward, done, info = env.step(action)
-
-
-        # 4. Obtain the Q'(mark as Q1) values by feeding the new state through our network
-        Q_next_state = Q.forward(next_state)
-
-        # 5. Obtain maxQ' and set our target value for chosen action using the bellman equation.
-        Q_target = Q.data
-        Q_target[0][a] = reward + gamma * Q_next_state.max().item()
-
-        # 6. Train the network using target and predicted Q values (model.zero(), forward, backward, optim.step)
-        Q_state = Q.forward(last_obs)
-        loss = criterion(Q, Q_target)
-        # model.zero_grad()
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
 
         last_obs = next_state
 
@@ -234,16 +218,24 @@ def dqn_learing(
         if (t > learning_starts and
                 t % learning_freq == 0 and
                 replay_buffer.can_sample(batch_size)):
+
+
             # Here, you should perform training. Training consists of four steps:
             # 3.a: use the replay buffer to sample a batch of transitions (see the
             # replay buffer code for function definition, each batch that you sample
             # should consist of current observations, current actions, rewards,
             # next observations, and done indicator).
+
+            batch = replay_buffer.sample(batch_size)
+
             # Note: Move the variables to the GPU if avialable
             # 3.b: fill in your own code to compute the Bellman error. This requires
             # evaluating the current and next Q-values and constructing the corresponding error.
             # Note: don't forget to clip the error between [-1,1], multiply is by -1 (since pytorch minimizes) and
             #       maskout post terminal status Q-values (see ReplayBuffer code).
+
+
+
             # 3.c: train the model. To do this, use the bellman error you calculated perviously.
             # Pytorch will differentiate this error for you, to backward the error use the following API:
             #       current.backward(d_error.data.unsqueeze(1))
@@ -251,6 +243,21 @@ def dqn_learing(
             # Your code should produce one scalar-valued tensor.
             # Note: don't forget to call optimizer.zero_grad() before the backward call and
             #       optimizer.step() after the backward call.
+
+            Q_next_state = Q.forward(torch.Tensor(next_state))
+
+            # 5. Obtain maxQ' and set our target value for chosen action using the bellman equation.
+            Q_target = Q_state.data
+            Q_target[action] = reward + gamma * Q_next_state.max().item()
+
+            # 6. Train the network using target and predicted Q values (model.zero(), forward, backward, optim.step)
+            Q_state = Q.forward(torch.Tensor(last_obs))
+            loss = criterion(Q_state, Q_target)
+            # model.zero_grad()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
             # 3.d: periodically update the target network by loading the current Q network weights into the
             #      target_Q network. see state_dict() and load_state_dict() methods.
             #      you should update every target_update_freq steps, and you may find the
