@@ -124,20 +124,9 @@ def dqn_learing(
     # Initialize target q function and q function, i.e. build the model.
     ######
     # YOUR CODE HERE
-    # Q = np.zeros((
-    #     *env.observation_space.shape,
-    #     *env.action_space.shape
-    # ))
 
-    def create_model(input_dim, output_dim):
-        return nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(np.prod(input_dim), output_dim)
-        )
-
-    input_dim = env.observation_space.shape
-    output_dim = env.action_space.n
-    Q = q_func(input_arg, output_dim)
+    Q = q_func(input_arg, num_actions)
+    target_Q = q_func(input_arg, num_actions)
     criterion = nn.MSELoss(reduction='sum')
 
     ######
@@ -196,14 +185,18 @@ def dqn_learing(
         if done is not None and done:
             last_obs = env.reset()
 
-        Q_state = Q.forward(torch.Tensor(last_obs))
+        last_frame_idx = replay_buffer.store_frame(last_obs)
+
+        last_frames = replay_buffer.encode_recent_observation()
+        Q_state = target_Q.forward(torch.Tensor(last_frames))
         action = Q_state.argmax().item()
         # action = env.action_space.sample()
         # 2. A chance of e to perform random action
-        if np.random.rand(1) < 0.1:
+        if np.random.rand(1) < exploration.value(t):
             action = env.action_space.sample()
 
         next_state, reward, done, info = env.step(action)
+        replay_buffer.store_effect(last_frame_idx, action, reward, done)
 
         last_obs = next_state
 
@@ -218,23 +211,19 @@ def dqn_learing(
         if (t > learning_starts and
                 t % learning_freq == 0 and
                 replay_buffer.can_sample(batch_size)):
-
-
             # Here, you should perform training. Training consists of four steps:
             # 3.a: use the replay buffer to sample a batch of transitions (see the
             # replay buffer code for function definition, each batch that you sample
             # should consist of current observations, current actions, rewards,
             # next observations, and done indicator).
 
-            batch = replay_buffer.sample(batch_size)
+
 
             # Note: Move the variables to the GPU if avialable
             # 3.b: fill in your own code to compute the Bellman error. This requires
             # evaluating the current and next Q-values and constructing the corresponding error.
             # Note: don't forget to clip the error between [-1,1], multiply is by -1 (since pytorch minimizes) and
             #       maskout post terminal status Q-values (see ReplayBuffer code).
-
-
 
             # 3.c: train the model. To do this, use the bellman error you calculated perviously.
             # Pytorch will differentiate this error for you, to backward the error use the following API:
@@ -243,27 +232,31 @@ def dqn_learing(
             # Your code should produce one scalar-valued tensor.
             # Note: don't forget to call optimizer.zero_grad() before the backward call and
             #       optimizer.step() after the backward call.
+            # obs_batch, act_batch, rew_batch, next_obs_batch, done_mask = replay_buffer.sample(batch_size)
+            batch = replay_buffer.sample(batch_size)
+            for obs, act, r, next_obs, done in zip(*batch):
+                Q_state = Q.forward(torch.Tensor(obs))
+                Q_next_state = Q.forward(torch.Tensor(next_obs))
 
-            Q_next_state = Q.forward(torch.Tensor(next_state))
+                # 5. Obtain maxQ' and set our target value for chosen action using the bellman equation.
+                Q_target = Q_state.data
+                Q_target[act] = r + gamma * Q_next_state.max().item()
 
-            # 5. Obtain maxQ' and set our target value for chosen action using the bellman equation.
-            Q_target = Q_state.data
-            Q_target[action] = reward + gamma * Q_next_state.max().item()
-
-            # 6. Train the network using target and predicted Q values (model.zero(), forward, backward, optim.step)
-            Q_state = Q.forward(torch.Tensor(last_obs))
-            loss = criterion(Q_state, Q_target)
-            # model.zero_grad()
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+                # 6. Train the network using target and predicted Q values (model.zero(), forward, backward, optim.step)
+                loss = criterion(Q_state, Q_target)
+                # model.zero_grad()
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
             # 3.d: periodically update the target network by loading the current Q network weights into the
             #      target_Q network. see state_dict() and load_state_dict() methods.
             #      you should update every target_update_freq steps, and you may find the
             #      variable num_param_updates useful for this (it was initialized to 0)
             #####
-
+            num_param_updates += 1
+            if num_param_updates % target_update_freq == 0:
+                target_Q.load_state_dict(Q.state_dict())
             # YOUR CODE HERE
             pass
             #####
