@@ -234,7 +234,7 @@ def dqn_learing(
             #       optimizer.step() after the backward call.
             # obs_batch, act_batch, rew_batch, next_obs_batch, done_mask = replay_buffer.sample(batch_size)
             batch = replay_buffer.sample(batch_size)
-            for obs, act, r, next_obs, done in zip(*batch):
+            for obs, act, r, next_obs, d in zip(*batch):
                 Q_state = Q.forward(torch.Tensor(obs))
                 Q_next_state = Q.forward(torch.Tensor(next_obs))
 
@@ -258,7 +258,6 @@ def dqn_learing(
             if num_param_updates % target_update_freq == 0:
                 target_Q.load_state_dict(Q.state_dict())
             # YOUR CODE HERE
-            pass
             #####
 
         ### 4. Log progress and keep track of statistics
@@ -283,3 +282,5 @@ def dqn_learing(
             with open('statistics.pkl', 'wb') as f:
                 pickle.dump(Statistic, f)
                 print("Saved to %s" % 'statistics.pkl')
+                # import pickle; stats = pickle.load(open('statistics.pkl', 'rb')); stats
+                # import matplotlib.pyplot as plt; plt.show(stats['mean_episode_rewards'])
