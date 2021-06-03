@@ -240,7 +240,10 @@ def dqn_learing(
 
                 # 5. Obtain maxQ' and set our target value for chosen action using the bellman equation.
                 Q_target = Q_state.data
-                Q_target[act] = r + gamma * Q_next_state.max().item()
+                if d:
+                    Q_target[act] = float(r)
+                else:
+                    Q_target[act] = r + gamma * Q_next_state.max().item()
 
                 # 6. Train the network using target and predicted Q values (model.zero(), forward, backward, optim.step)
                 loss = criterion(Q_state, Q_target)
