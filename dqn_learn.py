@@ -117,16 +117,16 @@ def dqn_learing(
         if sample > eps_threshold:
             obs = torch.from_numpy(obs).type(dtype).unsqueeze(0) / 255.0
             # Use volatile = True if variable is only used in inference mode, i.e. don’t save the history
-            return model(Variable(obs, volatile=True)).data.max(1)[1].cpu()
+            return model(Variable(obs, volatile=True)).data.max(1)[1]#.cpu()
         else:
-            return torch.IntTensor([[random.randrange(num_actions)]])
+            return torch.IntTensor([random.randrange(num_actions)])
 
     # Initialize target q function and q function, i.e. build the model.
     ######
     # YOUR CODE HERE
 
-    Q = q_func(input_arg, num_actions)
-    target_Q = q_func(input_arg, num_actions)
+    Q = q_func(input_arg, num_actions).type(dtype)
+    target_Q = q_func(input_arg, num_actions).type(dtype)
     criterion = nn.MSELoss(reduction='sum')
 
     ######
@@ -145,6 +145,10 @@ def dqn_learing(
     best_mean_episode_reward = -float('inf')
     last_obs = env.reset()
     LOG_EVERY_N_STEPS = 10000
+
+    losses = []
+    losses_clipped = []
+
     done = None
     for t in count():
         ### 1. Check stopping criterion
@@ -186,16 +190,14 @@ def dqn_learing(
             last_obs = env.reset()
 
         last_frame_idx = replay_buffer.store_frame(last_obs)
-
         last_frames = replay_buffer.encode_recent_observation()
-        Q_state = target_Q.forward(torch.Tensor(last_frames))
-        action = Q_state.argmax().item()
-        # action = env.action_space.sample()
-        # 2. A chance of e to perform random action
-        if np.random.rand(1) < exploration.value(t):
-            action = env.action_space.sample()
 
+        if t > learning_starts:
+            action = select_epilson_greedy_action(Q, last_frames, t)[0]
+        else:
+            action = env.action_space.sample()
         next_state, reward, done, info = env.step(action)
+        # reward = np.clip(reward, -1, 1)
         replay_buffer.store_effect(last_frame_idx, action, reward, done)
 
         last_obs = next_state
@@ -217,8 +219,6 @@ def dqn_learing(
             # should consist of current observations, current actions, rewards,
             # next observations, and done indicator).
 
-
-
             # Note: Move the variables to the GPU if avialable
             # 3.b: fill in your own code to compute the Bellman error. This requires
             # evaluating the current and next Q-values and constructing the corresponding error.
@@ -233,34 +233,42 @@ def dqn_learing(
             # Note: don't forget to call optimizer.zero_grad() before the backward call and
             #       optimizer.step() after the backward call.
             # obs_batch, act_batch, rew_batch, next_obs_batch, done_mask = replay_buffer.sample(batch_size)
+
+            # YOUR CODE HERE
             batch = replay_buffer.sample(batch_size)
-            for obs, act, r, next_obs, d in zip(*batch):
-                Q_state = Q.forward(torch.Tensor(obs))
-                Q_next_state = Q.forward(torch.Tensor(next_obs))
+            obs_batch, act_batch, rew_batch, next_obs_batch, done_mask = batch
+            act_batch = Variable(torch.from_numpy(act_batch).type(torch.LongTensor))
+            obs_batch, rew_batch, next_obs_batch, done_mask = (Variable(torch.from_numpy(arr).type(dtype)) for arr in
+                                                               (obs_batch, rew_batch, next_obs_batch, done_mask))
+            obs_batch, next_obs_batch = obs_batch / 255.0, next_obs_batch / 255.0
 
-                # 5. Obtain maxQ' and set our target value for chosen action using the bellman equation.
-                Q_target = Q_state.data
-                if d:
-                    Q_target[act] = float(r)
-                else:
-                    Q_target[act] = r + gamma * Q_next_state.max().item()
+            if USE_CUDA:
+                act_batch = act_batch.cuda()
+                rew_batch = rew_batch.cuda()
 
-                # 6. Train the network using target and predicted Q values (model.zero(), forward, backward, optim.step)
-                loss = criterion(Q_state, Q_target)
-                # model.zero_grad()
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+            Q_values = Q(obs_batch).gather(1, act_batch.unsqueeze(1)).reshape(-1)
 
-            # 3.d: periodically update the target network by loading the current Q network weights into the
-            #      target_Q network. see state_dict() and load_state_dict() methods.
-            #      you should update every target_update_freq steps, and you may find the
-            #      variable num_param_updates useful for this (it was initialized to 0)
-            #####
+            target_Q_next_obs = target_Q(next_obs_batch).detach().max(dim=1)[0]
+            target_Q_values = rew_batch + (1 - done_mask) * (gamma * target_Q_next_obs)
+            # target_Q_values = target_Q_values
+
+            # Bellman error
+            loss = (target_Q_values - Q_values)
+            losses.append((loss.sum() / batch_size).item())
+
+            # Clipped bellman error
+            clipped_loss = torch.clamp(loss, -1, 1)
+            losses_clipped.append((clipped_loss.sum() / batch_size).item())
+
+            # minus to minimize loss
+            clipped_loss = -1. * clipped_loss
+            optimizer.zero_grad()
+            Q_values.backward(clipped_loss.data)
+            optimizer.step()
+
             num_param_updates += 1
             if num_param_updates % target_update_freq == 0:
                 target_Q.load_state_dict(Q.state_dict())
-            # YOUR CODE HERE
             #####
 
         ### 4. Log progress and keep track of statistics
@@ -287,3 +295,9 @@ def dqn_learing(
                 print("Saved to %s" % 'statistics.pkl')
                 # import pickle; stats = pickle.load(open('statistics.pkl', 'rb')); stats
                 # import matplotlib.pyplot as plt; plt.show(stats['mean_episode_rewards'])
+            with open('losses.pkl', 'wb') as f:
+                pickle.dump(losses, f)
+                print("Saved to %s" % 'losses.pkl')
+            with open('losses_clipped.pkl', 'wb') as f:
+                pickle.dump(losses_clipped, f)
+                print("Saved to %s" % 'losses_clipped.pkl')

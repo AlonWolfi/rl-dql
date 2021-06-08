@@ -1,7 +1,7 @@
 import gym
 import torch.optim as optim
 
-from dqn_learn import OptimizerSpec, dqn_learing
+from dqn_learn_yanai import OptimizerSpec, dqn_learing
 from dqn_model import DQN_RAM
 from utils.gym import get_ram_env, get_wrapper_by_name
 from utils.schedule import LinearSchedule
